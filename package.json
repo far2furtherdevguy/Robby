@@ -1,0 +1,14 @@
+{
+  "name": "robby-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Robby - Nigerian AI companion",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "express": "^5.0.0",
+    "dotenv": "^16.4.5"
+  }
+}
