@@ -5,60 +5,133 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// Check API key
+if (!process.env.GEMINI_API_KEY) {
+  console.error("Missing GEMINI_API_KEY environment variable.");
+  process.exit(1);
+}
+
+// Initialize application
 const app = express();
-app.use(express.json());
+
+app.use(express.json({ limit: "20kb" }));
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
+// Robby's AI personality
 const ROBBY_PROMPT = `
-You are Robby, a knowledgeable Nigerian guy.
+You are Robby, a knowledgeable Nigerian guy
+with a natural, intelligent and relatable personality.
+
+IDENTITY:
+Your name is Robby.
+You are a virtual Nigerian group companion.
+Never pretend to be a real human.
+
+LANGUAGE:
+- Speak mostly natural, fluent English.
+- Occasionally use Nigerian slang and Pidgin.
+- Use expressions like Omo, Abeg, No wahala,
+  My guy and Guy when they fit naturally.
+- Never force slang into every sentence.
+- Avoid exaggerated Pidgin.
 
 PERSONALITY:
-- Intelligent, funny, confident and friendly.
-- Speak mostly natural English.
-- Use small amounts of Nigerian slang and Pidgin.
-- Be relatable, witty and conversational.
+- Intelligent, confident, friendly and witty.
+- Have your own opinions and explain your reasoning.
+- Be funny without forcing jokes.
+- Understand sarcasm, memes and Nigerian humour.
+- Be respectful without being boring.
 
 KNOWLEDGE:
-- Understand football, gaming, anime, movies,
-  technology, science, music and everyday topics.
-- Answer questions directly and accurately.
-- Explain things properly when asked.
-- Never invent facts.
-- Admit when you don't know something.
+You can discuss:
+- Football and sports.
+- Gaming and technology.
+- Anime and manga.
+- Movies and entertainment.
+- Science and education.
+- History and geography.
+- Music and internet culture.
+- Everyday life and general knowledge.
+
+Give useful and accurate answers.
+Never invent facts.
+If you don't know something, admit it.
+Clearly distinguish facts from opinions.
 
 CONVERSATION:
-- Understand context.
-- Contribute meaningful opinions.
-- Follow conversations naturally.
+- Respond directly to people's messages.
+- Understand previous messages in the conversation.
+- Contribute meaningful ideas.
 - Don't dodge questions with jokes.
-- Don't give dismissive or robotic replies.
-- Don't force jokes into serious discussions.
+- Don't reply with generic statements.
+- Don't ask unnecessary questions.
+- Don't dominate conversations.
 
-STYLE:
-- Usually 1-4 sentences.
-- Use humour when appropriate.
-- Avoid repeating catchphrases.
-- Never pretend to be human.
+HUMOUR:
+- Use clever jokes and playful teasing.
+- You can give witty comebacks.
+- Never be unnecessarily offensive.
+- Understand when a conversation is serious.
 
-Your name is Robby.
+RESPONSE STYLE:
+- Casual conversations: usually 1-4 sentences.
+- Questions: answer directly.
+- Complex topics: explain properly.
+- Serious discussions: be thoughtful.
+- Avoid repetitive catchphrases.
+- Never sound like a customer service chatbot.
+
+CORE RULE:
+Be knowledgeable, interesting and naturally
+conversational. Always contribute something useful
+when responding.
 `;
 
+// Temporary conversation memory
 const conversations = new Map();
 
+const MAX_HISTORY = 12;
+const MAX_SESSIONS = 200;
+
+function getSession(sessionId) {
+  if (!conversations.has(sessionId)) {
+    conversations.set(sessionId, []);
+  }
+
+  return conversations.get(sessionId);
+}
+
+// Home page
 app.get("/", (req, res) => {
-  res.send("Robby AI is running!");
+  res.send(`
+    <h1>Robby is online!</h1>
+    <p>Nigerian AI companion</p>
+  `);
 });
 
+// Health check
+app.get("/health", (req, res) => {
+  res.json({
+    status: "online",
+    bot: "Robby"
+  });
+});
+
+// Chat endpoint
 app.post("/api/chat", async (req, res) => {
   try {
-    const { message, sessionId = "test" } = req.body;
+    const { message, sessionId } = req.body;
 
-    if (!message || typeof message !== "string") {
+    // Validate message
+    if (
+      typeof message !== "string" ||
+      !message.trim()
+    ) {
       return res.status(400).json({
-        error: "Please enter a message."
+        error: "Please provide a message."
       });
     }
 
@@ -68,43 +141,86 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    let history = conversations.get(sessionId) || [];
+    // Validate session
+    if (
+      typeof sessionId !== "string" ||
+      !sessionId.trim() ||
+      sessionId.length > 100
+    ) {
+      return res.status(400).json({
+        error: "Invalid session ID."
+      });
+    }
 
-    history.push({
-      role: "user",
-      parts: [{ text: message }]
-    });
+    // Prevent unlimited memory growth
+    if (
+      !conversations.has(sessionId) &&
+      conversations.size >= MAX_SESSIONS
+    ) {
+      return res.status(503).json({
+        error: "Robby is busy. Try again later."
+      });
+    }
 
+    const history = getSession(sessionId);
+
+    const contents = [
+      ...history,
+      {
+        role: "user",
+        parts: [{ text: message.trim() }]
+      }
+    ];
+
+    // Ask Gemini
     const response = await ai.models.generateContent({
-      model: "gemini-flash-latest",
-      contents: history,
+      model: "gemini-3.8-flash",
+      contents,
       config: {
-        systemInstruction: ROBBY_PROMPT
+        systemInstruction: ROBBY_PROMPT,
+        temperature: 0.8
       }
     });
 
-    const reply = response.text || "I couldn't generate a reply.";
+    const reply =
+      response.text?.trim() ||
+      "I couldn't generate a response. Try again.";
 
-    history.push({
-      role: "model",
-      parts: [{ text: reply }]
+    // Save conversation
+    history.push(
+      {
+        role: "user",
+        parts: [{ text: message.trim() }]
+      },
+      {
+        role: "model",
+        parts: [{ text: reply }]
+      }
+    );
+
+    // Keep recent messages only
+    conversations.set(
+      sessionId,
+      history.slice(-MAX_HISTORY)
+    );
+
+    res.json({
+      bot: "Robby",
+      reply
     });
-
-    conversations.set(sessionId, history.slice(-12));
-
-    res.json({ reply });
 
   } catch (error) {
     console.error("Robby error:", error.message);
 
     res.status(500).json({
-      error: "Robby encountered a problem. Try again."
+      error: "Robby encountered a problem. Please try again."
     });
   }
 });
 
+// Start server
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Robby is running on port ${PORT}`);
 });
